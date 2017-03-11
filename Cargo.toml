@@ -1,6 +1,7 @@
 [package]
 name = "rush"
 version = "0.1.0"
-authors = ["Peter ROng <rongyy@shanghaitech.edu.cn>"]
+authors = ["Peter Rong <rongyy@shanghaitech.edu.cn>"]
 
 [dependencies]
+libc = { path="/opt/crate/libc-0.2", version="0.2" }

@@ -95,11 +95,29 @@ fn safe_chdir(curr: String, dest: String){
 		_ => println!("ChDirError: failed to change directory."),
 	}
 }
+
+fn print_job(job: &Vec<String>){
+	for i in 0..job.len(){
+		print!("{}", job[i]);
+		if i!=job.len() { print!(" "); }
+	}
+	print!("\n");
+}
 fn print_jobs (mut history: &mut History){
-	for &(pid,ref job) in &history.jobs{
-		;
+	let mut temp: i32 = 1;
+	let mut new_jobs: Vec<(i32, Vec<String>)> = Vec::new();
+
+	for &(pid, ref job) in &history.jobs{
+		match unsafe{ waitpid(pid, &mut temp, WNOHANG)} {
+			0	=> { 
+				new_jobs.push((pid, job.clone()));
+				print_job(job);
+			},
+			_	=> { },
+		}
 	}
 }
+
 fn print_history(history: &History){
 	for i in 0..history.hist.len()-1{
 		print!("{:5}  {}", i+1, history.hist[i]);

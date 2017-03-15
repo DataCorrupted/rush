@@ -75,16 +75,11 @@ fn safe_kill(pid: String){
 	}
 }
 
-fn safe_chdir(curr: String, dest: String){
+fn safe_chdir(dest: String){
 	// The real destination can be a folder in current directory,
-	// or a totally new directory defined by user, we have to find out.
-	let real_dest = match dest.as_bytes()[0]{
-		// Commands starting with a "/", whose ascii is 47,
-		// in which case, dest is the real dest.
-		47	=> dest,
-		// Or, dest just points a folder in current directory.
-		_	=> curr + "/" + &dest,
-	};
+	// or a totally new directory defined by user, 
+	// we have use expand address to find out.
+	let real_dest = get_absolute_path(dest);
 	// Turn to CString for ffi.
 	let c_dest = CString::new(real_dest.as_bytes())
 					.unwrap().as_ptr();
@@ -103,16 +98,11 @@ fn print_job(job: &Vec<String>){
 	}
 	print!("\n");
 }
-fn print_jobs (mut history: &mut History){
+fn print_jobs (history: &mut History){
 	let mut temp: i32 = 1;
-	let mut new_jobs: Vec<(i32, Vec<String>)> = Vec::new();
-
 	for &(pid, ref job) in &history.jobs{
 		match unsafe{ waitpid(pid, &mut temp, WNOHANG)} {
-			0	=> { 
-				new_jobs.push((pid, job.clone()));
-				print_job(job);
-			},
+			0	=> { print_job(job); },
 			_	=> { },
 		}
 	}
@@ -124,29 +114,68 @@ fn print_history(history: &History){
 	}
 }
 
+fn create_file(file: *const i8){ unsafe {
+	let open_file = fopen(file, CString::new("a").unwrap().as_ptr()); 
+	fclose(open_file);	
+} }
+
 fn external_cmd(command: CommandLine, 
 				mut history: &mut History){
 	match unsafe { fork() } {
 		// Child
 		0 	=> {
+			// Abstract I/O files in 
+			let mut in_handle = -1;
+			let mut out_handle = -1;
+			let mut args: Vec<String> = Vec::new();
+			for arg in command.args.clone(){
+				match arg.chars().nth(0).unwrap(){
+					'<'	=> { 
+						let in_file  = CString::new(
+								get_absolute_path(
+									arg[1..arg.len()].to_string()
+								).as_str()
+							).unwrap().as_ptr();
+						// In case such file don't exist, we create it by fopen.
+						create_file(in_file);
+						in_handle = unsafe { open(in_file, O_RDONLY) };
+					},
+					'>'	=> { 
+						let out_file = CString::new(
+								get_absolute_path(
+									arg[1..arg.len()].to_string()
+								).as_str()
+							).unwrap().as_ptr();
+						create_file(out_file);
+						out_handle = unsafe { open(out_file, O_WRONLY) };
+					},
+					 _  => args.push(arg.clone()),
+				}
+			}
+			unsafe { 
+				dup2(in_handle, 0); 
+				dup2(out_handle, 1);
+			}
+//			println!("{:?}", in_handle);
+//			println!("{:?}", out_handle);
 			// Convert cmd(args[0]) and args into style,
-			// and remove it by the way.
-			let cmd = command.args[0].clone();
+			let cmd = args[0].clone();
 			let c_prog = CString::new(cmd.as_str()).unwrap();
 			let mut c_args: Vec<_> = 
-				command.args.iter()
-							.map(|x| CString::new(x.as_str())
-									.unwrap().as_ptr())
-							.collect();
+				args.iter()
+					.map(|x| CString::new(x.as_str())
+						.unwrap().as_ptr())
+					.collect();
 			c_args.push(std::ptr::null());
 
+			unsafe { close(in_handle); close(out_handle); }
 			match unsafe{ execvp(c_prog.as_ptr(), c_args.as_ptr()) }{
 				-1 => println!("ExecError: failed to execute."),
 				// Should execv(*const i8, *const *const i8) work properly, 
 				// the following line won't print.
 				_  => println!("ExecError: your computer's down 
 								cause something crazy thing happened"),
-			};		
+			};	
 		},
 		// Error.
 		-1	=> { println!("ForkError: failed to fork."); },
@@ -165,7 +194,8 @@ fn external_cmd(command: CommandLine,
 }
 
 fn main() {
-	let mut history: History = History{ hist: Vec::new(), jobs: Vec::new() };
+	let mut history: History = 
+		History{ hist: Vec::new(), jobs: Vec::new() };
 
 	loop{
 		print!("$ ");
@@ -190,12 +220,12 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 	match command.args.len() {
 		0	=> return,
 		_	=> cmd = command.args[0].clone(),
-	}
+	};	
 	match cmd.as_ref() {
 		"exit"	=> safe_exit(0),
 		"pwd"	=> println!("{}", get_directory()),
 		"cd"	=> { 
-			let dest: String = {
+			let dest = {
 				match command.args.len() {
 					// In real bash, cd without parameters returns ~.
 					1 => "/home".to_string(),
@@ -203,7 +233,7 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 					_ => command.args[1].clone(),
 				}
 			};
-			safe_chdir(get_directory(), dest);
+			safe_chdir(dest);
 		},
 		"history"	=> print_history(&history),
 		"jobs"		=> print_jobs(&mut history),
@@ -223,4 +253,14 @@ fn get_directory() -> String{
 	// Discrad the last '\n'.
 	temp.pop();	
 	temp
+}
+
+fn get_absolute_path(dest: String) -> String {
+	match dest.as_bytes()[0]{
+		// Commands starting with a "/", whose ascii is 47,
+		// in which case, dest is the real dest.
+		47	=> dest,
+		// Or, dest just points a folder in current directory.
+		_	=> get_directory() + "/" + &dest,
+	}
 }

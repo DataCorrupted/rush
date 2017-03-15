@@ -128,36 +128,38 @@ fn external_cmd(command: CommandLine,
 			let mut in_handle = -1;
 			let mut out_handle = -1;
 			let mut args: Vec<String> = Vec::new();
-			for arg in command.args.clone(){
+			let mut i = 0;
+			loop{
+			//for arg in command.args.clone(){
+				let arg = command.args[i].clone();
 				match arg.chars().nth(0).unwrap(){
-					'<'	=> { 
-						let in_file  = CString::new(
-								get_absolute_path(
-									arg[1..arg.len()].to_string()
-								).as_str()
+					'<'|'>'	=> { 
+						let mut file = String::new();
+						match arg.len(){
+							1	=> { i += 1; file = command.args[i].clone(); },
+							_	=> { file = arg[1..].to_string(); },
+						}
+						let file  = CString::new(
+								get_absolute_path(file).as_str()
 							).unwrap().as_ptr();
 						// In case such file don't exist, we create it by fopen.
-						create_file(in_file);
-						in_handle = unsafe { open(in_file, O_RDONLY) };
-					},
-					'>'	=> { 
-						let out_file = CString::new(
-								get_absolute_path(
-									arg[1..arg.len()].to_string()
-								).as_str()
-							).unwrap().as_ptr();
-						create_file(out_file);
-						out_handle = unsafe { open(out_file, O_WRONLY) };
+						create_file(file);
+						match arg.chars().nth(0).unwrap(){
+							'<'	=> { in_handle = unsafe { open(file, O_RDONLY) }; },
+							'>' => { out_handle = unsafe { open(file, O_WRONLY) }; },
+							 _ 	=> { },
+						};
+						
 					},
 					 _  => args.push(arg.clone()),
 				}
+				i += 1;
+				if i == command.args.len() { break; }
 			}
 			unsafe { 
 				dup2(in_handle, 0); 
 				dup2(out_handle, 1);
 			}
-//			println!("{:?}", in_handle);
-//			println!("{:?}", out_handle);
 			// Convert cmd(args[0]) and args into style,
 			let cmd = args[0].clone();
 			let c_prog = CString::new(cmd.as_str()).unwrap();

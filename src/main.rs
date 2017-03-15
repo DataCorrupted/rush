@@ -3,7 +3,7 @@ extern crate libc;
 use std::io::{self, Write};
 use std::ffi::*;
 use libc::*;
-use std::process::Command;
+use std::env;
 
 #[derive(Debug)]
 struct CommandLine {
@@ -198,7 +198,6 @@ fn external_cmd(command: CommandLine,
 fn main() {
 	let mut history: History = 
 		History{ hist: Vec::new(), jobs: Vec::new() };
-
 	loop{
 		print!("$ ");
 		io::stdout().flush().unwrap();
@@ -248,13 +247,7 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 }
 
 fn get_directory() -> String{
-	let mut temp = String::from_utf8( 
-			Command::new("pwd")
-				.output().unwrap().stdout)
-			.unwrap();
-	// Discrad the last '\n'.
-	temp.pop();	
-	temp
+	env::current_dir().unwrap().display().to_string()
 }
 
 fn get_absolute_path(dest: String) -> String {

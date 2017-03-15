@@ -96,7 +96,7 @@ fn safe_chdir(curr: String, dest: String){
 	}
 }
 fn print_jobs (mut history: &mut History){
-	for (pid, job) in &history{
+	for &(pid,ref job) in &history.jobs{
 		;
 	}
 }

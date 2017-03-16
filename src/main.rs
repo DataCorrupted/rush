@@ -21,14 +21,12 @@ fn split2vec(temp: &String, c: char) -> Vec<String>{
 	temp.clone().split(c).map(|x| x.to_string()).collect()
 }
 
-fn parse_cmd(mut cmd_line: String,
-			 history: &mut History) -> CommandLine{
+fn parse_cmd(mut cmd_line: String) -> CommandLine{
 	let mut command: CommandLine = CommandLine{  
 		cmd: String::new(),
 		args: Vec::new(),
 		if_continue: false,
 	};
-	history.hist.push(cmd_line.clone());
 
 	cmd_line = str::replace(cmd_line.as_str(), "\n", " ").to_string();
 	cmd_line = str::replace(cmd_line.as_str(), "\t", " ").to_string();
@@ -37,11 +35,13 @@ fn parse_cmd(mut cmd_line: String,
 		// Next find '&',
 		// and clear all the unnecessary tags like ' '.
 		match cmd_line.pop(){
-			// Command with only \n (Null command).
+			// Command with nothing (Null command).
 			None	=> return command,
 			Some(x) => match x {
 				'&' => { command.if_continue = true; },
 				' ' => continue,
+				// We reached the rightmost byte and it's not a &,
+				// so this stage is done.
 				 _  => { cmd_line.push(x); break; },
 			},
 		};
@@ -67,16 +67,12 @@ fn parse_cmd(mut cmd_line: String,
 	command
 }
 
-fn safe_exit(){
-	unsafe{ exit(0); }
-}
-
 fn safe_kill(pid: String){
 	// Just learned this way to convert a String to i32 from stackoverflow.
 	// http://stackoverflow.com/questions/27043268/convert-a-string-to-int-in-rust
 	let pid = pid.parse::<i32>().unwrap();
 	if unsafe { kill(pid, libc::SIGTERM) } == -1 {
-	//	println!("KillError: failed to kill the process (pid:{})", pid);
+		println!("KillError: failed to kill the process (pid:{})", pid);
 	}
 }
 
@@ -92,7 +88,7 @@ fn safe_chdir(dest: String){
 	match unsafe { chdir(c_dest) } {
 	// According to API, 0 means success, -1 fail.
 		0 => { },
-		_ => println!("ChDirError: failed to change directory."),
+		_ => println!("CdError: failed to change directory."),
 	}
 }
 
@@ -116,6 +112,7 @@ fn safe_execvp(args: Vec<String>){
 		_  => println!("ExecError: your computer's down 
 						cause something crazy thing happened"),
 	};
+	unsafe{ exit(0); }
 }
 
 /*
@@ -140,7 +137,7 @@ fn io_redirection(command: &CommandLine) -> Vec<String> {
 					_	=> arg[1..].to_string(),
 				};
 				let file  = CString::new(
-						get_absolute_path(file).as_str()
+						get_absolute_path(file).as_bytes()
 					).unwrap().as_ptr();
 				// In case such file don't exist, we create it by fopen.
 				create_file(file);
@@ -167,9 +164,7 @@ fn io_redirection(command: &CommandLine) -> Vec<String> {
 	args
 }
 
-fn external_cmd(command: CommandLine, 
-				mut history: &mut History){
-//	println!("{:?}", command.if_continue);
+fn external_cmd(command: CommandLine, mut history: &mut History){
 	match unsafe { fork() } {
 		// Child
 		0 	=> {
@@ -180,15 +175,12 @@ fn external_cmd(command: CommandLine,
 		-1	=> { println!("ForkError: failed to fork."); },
 		// Parent.
 		pid	=> {
-			if !command.if_continue {
-				// I'm not sure why should I cast it as *mut i32 here,
-				// Nor it's downsides.
-//				println!("{:?}", &pid);
-				let mut temp: i32 = 1;
-				unsafe{ waitpid(pid, &mut temp, 0); };
-			} else {
+			if command.if_continue {
 				// The existence of '&'
 				history.jobs.push((pid, command.args));
+			} else {
+				let mut status: i32 = 1;
+				unsafe{ waitpid(pid, &mut status, 0); };
 			}
 		},
 	}
@@ -206,10 +198,11 @@ fn main() {
 		match io::stdin().read_line(&mut cmd_line){
 		// Catch possible errors here.
 			// Once nothing read(EOF), exit.
-			Ok(n)  => { if n==0 { safe_exit(); }},
+			Ok(n)  => { if n==0 { break; } },
 			Err(_) => { println!("ReadLineError: failed to read."); continue; },
 		}
-		let command = parse_cmd(cmd_line, &mut history);
+		history.hist.push(cmd_line.clone());
+		let command = parse_cmd(cmd_line);
 		execute_cmd(command, &mut history);
 	}
 }
@@ -217,17 +210,17 @@ fn main() {
 fn execute_cmd(command: CommandLine, mut history: &mut History){
 	match command.cmd.as_ref() {
 		""			=> return,
-		"exit"		=> safe_exit(),
+		"exit"		=> unsafe{ exit(0); },
 		"pwd"		=> println!("{}", get_directory()),
 		"cd"		=> { 
 			match command.args.len() {
-				// In real bash, cd without parameters returns ~.
 				1 => println!("CdError: no directory given."),
-				// and real bash won't care if there are more parameters. 
-				_ => safe_chdir(command.args[1].clone()),
+				// Real bash won't care if there are more parameters. 
+				2 => safe_chdir(command.args[1].clone()),
+				n => println!("CdError: too much directories({} args given)", n),
 			}
 		},
-		//"pipe"		=> safe_pipe(command, &mut history),
+		"pipe"		=> println!("{:?}", command.args),
 		"history"	=> print_history(&history),
 		"jobs"		=> print_jobs(&mut history),
 		"kill"		=> match command.args.len(){
@@ -248,10 +241,10 @@ fn get_directory() -> String{
 }
 
 fn get_absolute_path(dest: String) -> String {
-	match dest.as_bytes()[0]{
+	match dest.chars().nth(0).unwrap(){
 		// Commands starting with a "/", whose ascii is 47,
 		// in which case, dest is the real dest.
-		47	=> dest,
+		'/'	=> dest,
 		// Or, dest just points a folder in current directory.
 		_	=> get_directory() + "/" + &dest,
 	}
@@ -265,15 +258,12 @@ fn print_job(job: &Vec<String>){
 	print!("\n");
 }
 fn print_jobs (history: &mut History){
-	let mut temp: i32 = 1;
+	let mut status: i32 = 1;
 	let mut new_jobs: Vec<(i32, Vec<String>)> = Vec::new();
 	for &(pid, ref job) in &history.jobs{
-		match unsafe{ waitpid(pid, &mut temp, libc::WNOHANG)} {
-			0	=> { 
-				print_job(job); 
-				new_jobs.push((pid, job.clone()));
-			},
-			_	=> { },
+		if unsafe{ waitpid(pid, &mut status, libc::WNOHANG)}  == 0{
+			print_job(job); 
+			new_jobs.push((pid, job.clone()));
 		}
 	}
 	history.jobs = new_jobs;

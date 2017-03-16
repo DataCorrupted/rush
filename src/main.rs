@@ -22,9 +22,7 @@ fn split2vec(temp: &String, c: char) -> Vec<String>{
 }
 
 fn parse_cmd(mut cmd_line: String,
-			 history: &mut History) 
-	-> CommandLine{
-
+			 history: &mut History) -> CommandLine{
 	let mut command: CommandLine = CommandLine{  
 		cmd: String::new(),
 		args: Vec::new(),
@@ -37,15 +35,20 @@ fn parse_cmd(mut cmd_line: String,
 		None	=> safe_exit(0),
 		Some(_)	=> { },
 	}
-	// Next find '&'
-	match cmd_line.pop(){
-		// Command with only \n (Null command).
-		None	=> return command,
-		Some(x) => match x {
-			'&' => { command.if_continue = true; },
-			 _  => cmd_line.push(x),
-		},
-	};
+	cmd_line = str::replace(cmd_line.as_str(), "\t", " ").to_string();
+	loop {
+		// Next find '&',
+		// and clear all the unnecessary tags like ' '.
+		match cmd_line.pop(){
+			// Command with only \n (Null command).
+			None	=> return command,
+			Some(x) => match x {
+				'&' => { command.if_continue = true; },
+				' ' => continue,
+				 _  => { cmd_line.push(x); break; },
+			},
+		};
+	}
 	if split2vec(&cmd_line, '|').len() == 1 {
 	// There is no '|' in the cmd_line
 	// then split and ignore ""
@@ -76,7 +79,7 @@ fn safe_kill(pid: String){
 	// http://stackoverflow.com/questions/27043268/convert-a-string-to-int-in-rust
 	let pid = pid.parse::<i32>().unwrap();
 	if unsafe { kill(pid, SIGTERM) } == -1 {
-		println!("KillError: failed to kill the process (pid:{})", pid);
+	//	println!("KillError: failed to kill the process (pid:{})", pid);
 	}
 }
 
@@ -118,10 +121,11 @@ fn safe_execvp(args: Vec<String>){
 	};
 }
 
+/*
 fn safe_pipe(command: CommandLine,
 			 mut history: &mut History){
 	println!("{:?}", command.args);
-}
+}*/
 
 fn io_redirection(command: &CommandLine) -> Vec<String> {
 	// Abstract I/O files in 
@@ -216,17 +220,14 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 		"exit"		=> safe_exit(0),
 		"pwd"		=> println!("{}", get_directory()),
 		"cd"		=> { 
-			let dest = {
-				match command.args.len() {
-					// In real bash, cd without parameters returns ~.
-					1 => "/home".to_string(),
-					// and real bash won't care if there are more parameters. 
-					_ => command.args[1].clone(),
-				}
-			};
-			safe_chdir(dest);
+			match command.args.len() {
+				// In real bash, cd without parameters returns ~.
+				1 => println!("CdError: no directory given."),
+				// and real bash won't care if there are more parameters. 
+				_ => safe_chdir(command.args[1].clone()),
+			}
 		},
-		"pipe"		=> safe_pipe(command, &mut history),
+		//"pipe"		=> safe_pipe(command, &mut history),
 		"history"	=> print_history(&history),
 		"jobs"		=> print_jobs(&mut history),
 		"kill"		=> match command.args.len(){
@@ -259,7 +260,7 @@ fn get_absolute_path(dest: String) -> String {
 fn print_job(job: &Vec<String>){
 	for i in 0..job.len(){
 		print!("{}", job[i]);
-		if i!=job.len() { print!(" "); }
+		if i!=job.len()-1 { print!(" "); }
 	}
 	print!("\n");
 }

@@ -104,7 +104,7 @@ fn safe_execvp(args: Vec<String>){
 	// multiple args couldn't be translated to C style.
 	// For example, ls -a -l will only take -l pary.
 	let mut c_args: Vec<_> = 
-		args.iter()
+		args.into_iter()
 			.map(|x| CString::new(x.as_bytes())
 				.unwrap().as_ptr())
 			.collect();

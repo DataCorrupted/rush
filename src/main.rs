@@ -75,7 +75,7 @@ fn safe_kill(pid: String){
 	// Just learned this way to convert a String to i32 from stackoverflow.
 	// http://stackoverflow.com/questions/27043268/convert-a-string-to-int-in-rust
 	let pid = pid.parse::<i32>().unwrap();
-	if unsafe { kill(pid, SIGTERM) } == -1 {
+	if unsafe { kill(pid, libc::SIGTERM) } == -1 {
 	//	println!("KillError: failed to kill the process (pid:{})", pid);
 	}
 }
@@ -169,6 +169,7 @@ fn io_redirection(command: &CommandLine) -> Vec<String> {
 
 fn external_cmd(command: CommandLine, 
 				mut history: &mut History){
+//	println!("{:?}", command.if_continue);
 	match unsafe { fork() } {
 		// Child
 		0 	=> {
@@ -182,7 +183,9 @@ fn external_cmd(command: CommandLine,
 			if !command.if_continue {
 				// I'm not sure why should I cast it as *mut i32 here,
 				// Nor it's downsides.
-				unsafe{ wait(pid as *mut i32); };
+//				println!("{:?}", &pid);
+				let mut temp: i32 = 1;
+				unsafe{ waitpid(pid, &mut temp, 0); };
 			} else {
 				// The existence of '&'
 				history.jobs.push((pid, command.args));
@@ -263,12 +266,17 @@ fn print_job(job: &Vec<String>){
 }
 fn print_jobs (history: &mut History){
 	let mut temp: i32 = 1;
+	let mut new_jobs: Vec<(i32, Vec<String>)> = Vec::new();
 	for &(pid, ref job) in &history.jobs{
-		match unsafe{ waitpid(pid, &mut temp, WNOHANG)} {
-			0	=> { print_job(job); },
+		match unsafe{ waitpid(pid, &mut temp, libc::WNOHANG)} {
+			0	=> { 
+				print_job(job); 
+				new_jobs.push((pid, job.clone()));
+			},
 			_	=> { },
 		}
 	}
+	history.jobs = new_jobs;
 }
 
 fn print_history(history: &History){

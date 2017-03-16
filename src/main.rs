@@ -7,24 +7,18 @@ use std::env;
 
 #[derive(Debug)]
 struct CommandLine {
+	cmd: String,
 	args: Vec<String>,
 	if_continue: bool,
 }
-
 #[derive(Debug)]
 struct History {
 	hist: Vec<String>,
 	jobs: Vec<(i32, Vec<String>)>,
 }
 
-fn delete_empty(args: Vec<String>) -> Vec<String>{
-	let mut deleted: Vec<String> = Vec::new();
-	for arg in args {
-		if arg!="".to_string() {
-			deleted.push(arg);
-		}
-	}
-	deleted
+fn split2vec(temp: &String, c: char) -> Vec<String>{
+	temp.clone().split(c).map(|x| x.to_string()).collect()
 }
 
 fn parse_cmd(mut cmd_line: String,
@@ -32,6 +26,7 @@ fn parse_cmd(mut cmd_line: String,
 	-> CommandLine{
 
 	let mut command: CommandLine = CommandLine{  
+		cmd: String::new(),
 		args: Vec::new(),
 		if_continue: false,
 	};
@@ -47,18 +42,28 @@ fn parse_cmd(mut cmd_line: String,
 		// Command with only \n (Null command).
 		None	=> return command,
 		Some(x) => match x {
-			'&' => {
-				command.if_continue = true;
-				// Basic assumption: 
-				// 		if and only if when a command ends with '&',
-				//		it can be a target of command "jobs".
-			},
+			'&' => { command.if_continue = true; },
 			 _  => cmd_line.push(x),
 		},
 	};
-	command.args = delete_empty(
-			  	cmd_line.clone().split(' ')
-					  	.map(|x| x.to_string()).collect());
+	if split2vec(&cmd_line, '|').len() == 1 {
+	// There is no '|' in the cmd_line
+	// then split and ignore ""
+		for arg in split2vec(&cmd_line, ' '){
+			match arg.as_ref() {
+				""	=> { },
+				_	=> command.args.push(arg),
+			}
+		}
+		command.cmd = match command.args.len(){
+				0	=> "".to_string(),
+				_	=> command.args[0].clone(),
+		};
+	} else {
+	// else just take each part between '|' and take it as args
+		command.cmd = "pipe".to_string();
+		command.args = split2vec(&cmd_line, '|');	
+	}
 	command
 }
 
@@ -91,93 +96,83 @@ fn safe_chdir(dest: String){
 	}
 }
 
-fn print_job(job: &Vec<String>){
-	for i in 0..job.len(){
-		print!("{}", job[i]);
-		if i!=job.len() { print!(" "); }
-	}
-	print!("\n");
+fn safe_execvp(args: Vec<String>){
+	let cmd = args[0].clone();
+	// Convert cmd(args[0]) and args into C style,
+	let c_prog = CString::new(cmd.as_bytes()).unwrap();
+	// The following lines must be wrong
+	// multiple args couldn't be translated to C style.
+	// For example, ls -a -l will only take -l pary.
+	let mut c_args: Vec<_> = 
+		args.iter()
+			.map(|x| CString::new(x.as_bytes())
+				.unwrap().as_ptr())
+			.collect();
+	c_args.push(std::ptr::null());
+	match unsafe{ execvp(c_prog.as_ptr(), c_args.as_ptr()) }{
+		-1 => println!("ExecError: failed to execute."),
+		// Should execv(*const i8, *const *const i8) work properly, 
+		// the following line won't print.
+		_  => println!("ExecError: your computer's down 
+						cause something crazy thing happened"),
+	};
 }
-fn print_jobs (history: &mut History){
-	let mut temp: i32 = 1;
-	for &(pid, ref job) in &history.jobs{
-		match unsafe{ waitpid(pid, &mut temp, WNOHANG)} {
-			0	=> { print_job(job); },
-			_	=> { },
+
+fn safe_pipe(command: CommandLine,
+			 mut history: &mut History){
+	println!("{:?}", command.args);
+}
+
+fn io_redirection(command: &CommandLine) -> Vec<String> {
+	// Abstract I/O files in 
+	let mut in_handle = -1;
+	let mut out_handle = -1;
+	let mut args: Vec<String> = Vec::new();
+	let mut i = 0;
+	loop {
+	//for arg in command.args.clone(){
+		let arg = command.args[i].clone();
+		match arg.chars().nth(0).unwrap(){
+			'<'|'>'	=> { 
+				let file = match arg.len(){
+					1	=> { i += 1; command.args[i].clone() },
+					_	=> arg[1..].to_string(),
+				};
+				let file  = CString::new(
+						get_absolute_path(file).as_str()
+					).unwrap().as_ptr();
+				// In case such file don't exist, we create it by fopen.
+				create_file(file);
+				match arg.chars().nth(0).unwrap(){
+					'<'	=> { in_handle = unsafe { open(file, O_RDONLY) }; },
+					'>' => { out_handle = unsafe { open(file, O_WRONLY) }; },
+					 _ 	=> { },
+				};
+		
+			},
+			 _  => args.push(arg.clone()),
+		}
+		i += 1;
+		if i == command.args.len() { break; }
+	}
+	unsafe { 
+		if in_handle != -1{
+			dup2(in_handle, 0); close(in_handle);
+		}
+		if out_handle != -1{
+			dup2(out_handle, 1); close(out_handle); 
 		}
 	}
+	args
 }
-
-fn print_history(history: &History){
-	for i in 0..history.hist.len()-1{
-		print!("{:5}  {}", i+1, history.hist[i]);
-	}
-}
-
-fn create_file(file: *const i8){ unsafe {
-	let open_file = fopen(file, CString::new("a").unwrap().as_ptr()); 
-	fclose(open_file);	
-} }
 
 fn external_cmd(command: CommandLine, 
 				mut history: &mut History){
 	match unsafe { fork() } {
 		// Child
 		0 	=> {
-			// Abstract I/O files in 
-			let mut in_handle = -1;
-			let mut out_handle = -1;
-			let mut args: Vec<String> = Vec::new();
-			let mut i = 0;
-			loop{
-			//for arg in command.args.clone(){
-				let arg = command.args[i].clone();
-				match arg.chars().nth(0).unwrap(){
-					'<'|'>'	=> { 
-						let mut file = String::new();
-						match arg.len(){
-							1	=> { i += 1; file = command.args[i].clone(); },
-							_	=> { file = arg[1..].to_string(); },
-						}
-						let file  = CString::new(
-								get_absolute_path(file).as_str()
-							).unwrap().as_ptr();
-						// In case such file don't exist, we create it by fopen.
-						create_file(file);
-						match arg.chars().nth(0).unwrap(){
-							'<'	=> { in_handle = unsafe { open(file, O_RDONLY) }; },
-							'>' => { out_handle = unsafe { open(file, O_WRONLY) }; },
-							 _ 	=> { },
-						};
-						
-					},
-					 _  => args.push(arg.clone()),
-				}
-				i += 1;
-				if i == command.args.len() { break; }
-			}
-			unsafe { 
-				dup2(in_handle, 0); 
-				dup2(out_handle, 1);
-			}
-			// Convert cmd(args[0]) and args into style,
-			let cmd = args[0].clone();
-			let c_prog = CString::new(cmd.as_str()).unwrap();
-			let mut c_args: Vec<_> = 
-				args.iter()
-					.map(|x| CString::new(x.as_str())
-						.unwrap().as_ptr())
-					.collect();
-			c_args.push(std::ptr::null());
-
-			unsafe { close(in_handle); close(out_handle); }
-			match unsafe{ execvp(c_prog.as_ptr(), c_args.as_ptr()) }{
-				-1 => println!("ExecError: failed to execute."),
-				// Should execv(*const i8, *const *const i8) work properly, 
-				// the following line won't print.
-				_  => println!("ExecError: your computer's down 
-								cause something crazy thing happened"),
-			};	
+			let args = io_redirection(&command);
+			safe_execvp(args);
 		},
 		// Error.
 		-1	=> { println!("ForkError: failed to fork."); },
@@ -216,16 +211,11 @@ fn main() {
 }
 
 fn execute_cmd(command: CommandLine, mut history: &mut History){
-	let cmd: String;
-	// Test if it's null command
-	match command.args.len() {
-		0	=> return,
-		_	=> cmd = command.args[0].clone(),
-	};	
-	match cmd.as_ref() {
-		"exit"	=> safe_exit(0),
-		"pwd"	=> println!("{}", get_directory()),
-		"cd"	=> { 
+	match command.cmd.as_ref() {
+		""			=> return,
+		"exit"		=> safe_exit(0),
+		"pwd"		=> println!("{}", get_directory()),
+		"cd"		=> { 
 			let dest = {
 				match command.args.len() {
 					// In real bash, cd without parameters returns ~.
@@ -236,6 +226,7 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 			};
 			safe_chdir(dest);
 		},
+		"pipe"		=> safe_pipe(command, &mut history),
 		"history"	=> print_history(&history),
 		"jobs"		=> print_jobs(&mut history),
 		"kill"		=> match command.args.len(){
@@ -245,6 +236,11 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 		_			=> { external_cmd(command, &mut history); },
 	}
 }
+
+fn create_file(file: *const i8){ unsafe {
+	let open_file = fopen(file, CString::new("a").unwrap().as_ptr()); 
+	fclose(open_file);	
+} }
 
 fn get_directory() -> String{
 	env::current_dir().unwrap().display().to_string()
@@ -257,5 +253,28 @@ fn get_absolute_path(dest: String) -> String {
 		47	=> dest,
 		// Or, dest just points a folder in current directory.
 		_	=> get_directory() + "/" + &dest,
+	}
+}
+
+fn print_job(job: &Vec<String>){
+	for i in 0..job.len(){
+		print!("{}", job[i]);
+		if i!=job.len() { print!(" "); }
+	}
+	print!("\n");
+}
+fn print_jobs (history: &mut History){
+	let mut temp: i32 = 1;
+	for &(pid, ref job) in &history.jobs{
+		match unsafe{ waitpid(pid, &mut temp, WNOHANG)} {
+			0	=> { print_job(job); },
+			_	=> { },
+		}
+	}
+}
+
+fn print_history(history: &History){
+	for i in 0..history.hist.len()-1{
+		print!("{:5}  {}", i+1, history.hist[i]);
 	}
 }

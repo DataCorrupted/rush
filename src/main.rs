@@ -29,13 +29,10 @@ fn parse_cmd(mut cmd_line: String,
 		if_continue: false,
 	};
 	history.hist.push(cmd_line.clone());
-	// Throw the \n out.
-	match cmd_line.pop(){
-		// Or we are at EOF.
-		None	=> safe_exit(0),
-		Some(_)	=> { },
-	}
+
+	cmd_line = str::replace(cmd_line.as_str(), "\n", " ").to_string();
 	cmd_line = str::replace(cmd_line.as_str(), "\t", " ").to_string();
+
 	loop {
 		// Next find '&',
 		// and clear all the unnecessary tags like ' '.
@@ -70,8 +67,8 @@ fn parse_cmd(mut cmd_line: String,
 	command
 }
 
-fn safe_exit(exit_code: i32){
-	unsafe{ exit(exit_code) }
+fn safe_exit(){
+	unsafe{ exit(0); }
 }
 
 fn safe_kill(pid: String){
@@ -206,7 +203,7 @@ fn main() {
 		match io::stdin().read_line(&mut cmd_line){
 		// Catch possible errors here.
 			// Once nothing read(EOF), exit.
-			Ok(_)  => { },
+			Ok(n)  => { if n==0 { safe_exit(); }},
 			Err(_) => { println!("ReadLineError: failed to read."); continue; },
 		}
 		let command = parse_cmd(cmd_line, &mut history);
@@ -217,7 +214,7 @@ fn main() {
 fn execute_cmd(command: CommandLine, mut history: &mut History){
 	match command.cmd.as_ref() {
 		""			=> return,
-		"exit"		=> safe_exit(0),
+		"exit"		=> safe_exit(),
 		"pwd"		=> println!("{}", get_directory()),
 		"cd"		=> { 
 			match command.args.len() {

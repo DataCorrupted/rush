@@ -82,10 +82,9 @@ fn safe_chdir(dest: String){
 	// we have use expand address to find out.
 	let real_dest = get_absolute_path(dest);
 	// Turn to CString for ffi.
-	let c_dest = CString::new(real_dest.as_bytes())
-					.unwrap().as_ptr();
+	let c_dest = CString::new(real_dest.as_bytes()).unwrap();
 	// Change directory.
-	match unsafe { chdir(c_dest) } {
+	match unsafe { chdir(c_dest.as_ptr()) } {
 	// According to API, 0 means success, -1 fail.
 		0 => { },
 		_ => println!("CdError: failed to change directory."),
@@ -99,11 +98,11 @@ fn safe_execvp(args: Vec<String>){
 	// The following lines must be wrong
 	// multiple args couldn't be translated to C style.
 	// For example, ls -a -l will only take -l pary.
-	let mut c_args: Vec<_> = 
-		args.into_iter()
+	let c_args_temp: Vec<_> = args.iter()
 			.map(|x| CString::new(x.as_bytes())
-				.unwrap().as_ptr())
-			.collect();
+				.unwrap()).collect();
+	let mut c_args: Vec<_> = c_args_temp.iter()
+			.map(|x| x.as_ptr()).collect();
 	c_args.push(std::ptr::null());
 	match unsafe{ execvp(c_prog.as_ptr(), c_args.as_ptr()) }{
 		-1 => println!("ExecError: failed to execute."),
@@ -216,8 +215,8 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 			match command.args.len() {
 				1 => println!("CdError: no directory given."),
 				// Real bash won't care if there are more parameters. 
-				2 => safe_chdir(command.args[1].clone()),
-				n => println!("CdError: too much directories({} args given)", n),
+				_ => safe_chdir(command.args[1].clone()),
+				//n => println!("CdError: too much directories({} args given)", n),
 			}
 		},
 		"pipe"		=> println!("{:?}", command.args),

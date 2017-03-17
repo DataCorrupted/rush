@@ -137,9 +137,9 @@ fn io_redirection(command: &CommandLine) -> Vec<String> {
 				};
 				let file  = CString::new(
 						get_absolute_path(file).as_bytes()
-					).unwrap().as_ptr();
+					).unwrap();
 				// In case such file don't exist, we create it by fopen.
-				create_file(file);
+				create_file(file.as_ptr());
 				match arg.chars().nth(0).unwrap(){
 					'<'	=> { in_handle = unsafe { open(file, O_RDONLY) }; },
 					'>' => { out_handle = unsafe { open(file, O_WRONLY) }; },
@@ -231,7 +231,8 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 }
 
 fn create_file(file: *const i8){ unsafe {
-	let open_file = fopen(file, CString::new("a").unwrap().as_ptr()); 
+	let open_mode = CString::new("a").unwrap();
+	let open_file = fopen(file, open_mode.as_ptr()); 
 	fclose(open_file);	
 } }
 

@@ -139,10 +139,11 @@ fn io_redirection(command: &CommandLine) -> Vec<String> {
 						get_absolute_path(file).as_bytes()
 					).unwrap();
 				// In case such file don't exist, we create it by fopen.
-				create_file(file.as_ptr());
+				let file_ptr = file.as_ptr();
+				create_file(file_ptr);
 				match arg.chars().nth(0).unwrap(){
-					'<'	=> { in_handle = unsafe { open(file, O_RDONLY) }; },
-					'>' => { out_handle = unsafe { open(file, O_WRONLY) }; },
+					'<'	=> { in_handle = unsafe { open(file_ptr, O_RDONLY) }; },
+					'>' => { out_handle = unsafe { open(file_ptr, O_WRONLY) }; },
 					 _ 	=> { },
 				};
 		

@@ -14,7 +14,7 @@ struct CommandLine {
 #[derive(Debug)]
 struct History {
 	hist: Vec<String>,
-	jobs: Vec<(i32, Vec<String>)>,
+	jobs: Vec<(Vec<i32>, Vec<String>)>,
 }
 
 fn split2vec(temp: &String, c: char) -> Vec<String>{
@@ -114,11 +114,56 @@ fn safe_execvp(args: Vec<String>){
 	unsafe{ exit(0); }
 }
 
-/*
+
 fn safe_pipe(command: CommandLine,
 			 mut history: &mut History){
-	println!("{:?}", command.args);
-}*/
+	let args_cnt = command.args.len();
+	let mut pipes: Vec<[i32; 2]> = Vec::new();
+	let mut pids: Vec<i32>= Vec::new();
+	// We only have command-1 pipes to set up
+	for i in 0..args_cnt-1{
+		pipes.push([0, 0]);
+		unsafe {pipe(&mut pipes[i][0]);}
+	}
+	for i in 0..args_cnt{
+		match unsafe{ fork() }{
+			// Error.
+			-1	=> { println!("ForkError: failed to fork."); },
+			0	=> {
+				unsafe {
+					if i!= 0			{ dup2(pipes[i-1][0],0); }
+					if i!=args_cnt-1	{ dup2(pipes[ i ][1],1); }
+				}
+				for j in 0..args_cnt-1{
+					// Close each end of each pipe.
+					unsafe{ close(pipes[j][0]); close(pipes[j][1]); }
+				}
+				let sub_cmd = parse_cmd(command.args[i].clone());
+				execute(&sub_cmd);
+			},
+			pid => { pids.push(pid); },
+		}
+	}	
+	// Only the parent gets here.
+	for j in 0..args_cnt-1{
+		// Close each end of each pipe.
+		unsafe{ close(pipes[j][0]); close(pipes[j][1]); }
+	}
+	if command.if_continue{
+		let mut job: Vec<String> = Vec::new();
+		for sub_cmd in command.args.clone(){
+			job.append(&mut parse_cmd(sub_cmd).args);
+			job.push("|".to_string());
+		}
+		job.pop();
+		history.jobs.push((pids, job));
+	} else {
+		let mut status: i32 = 1;
+		for pid in pids {
+			unsafe{ waitpid(pid, &mut status, 0); };
+		}
+	}
+}
 
 fn io_redirection(command: &CommandLine) -> Vec<String> {
 	// Abstract I/O files in 
@@ -138,12 +183,14 @@ fn io_redirection(command: &CommandLine) -> Vec<String> {
 				let file  = CString::new(
 						get_absolute_path(file).as_bytes()
 					).unwrap();
-				// In case such file don't exist, we create it by fopen.
 				let file_ptr = file.as_ptr();
-				create_file(file_ptr);
 				match arg.chars().nth(0).unwrap(){
 					'<'	=> { in_handle = unsafe { open(file_ptr, O_RDONLY) }; },
-					'>' => { out_handle = unsafe { open(file_ptr, O_WRONLY) }; },
+					'>' => { 
+						// In case such file don't exist, we create it by fopen.
+						create_file(file_ptr);
+						out_handle = unsafe { open(file_ptr, O_WRONLY) }; 
+					},
 					 _ 	=> { },
 				};
 		
@@ -164,20 +211,22 @@ fn io_redirection(command: &CommandLine) -> Vec<String> {
 	args
 }
 
+fn execute(command: &CommandLine){
+	let args = 	io_redirection(&command);
+	safe_execvp(args);
+}
+
 fn external_cmd(command: CommandLine, mut history: &mut History){
 	match unsafe { fork() } {
-		// Child
-		0 	=> {
-			let args = io_redirection(&command);
-			safe_execvp(args);
-		},
 		// Error.
 		-1	=> { println!("ForkError: failed to fork."); },
+		// Child
+		0 	=> execute(&command),
 		// Parent.
 		pid	=> {
 			if command.if_continue {
 				// The existence of '&'
-				history.jobs.push((pid, command.args));
+				history.jobs.push((vec![pid], command.args));
 			} else {
 				let mut status: i32 = 1;
 				unsafe{ waitpid(pid, &mut status, 0); };
@@ -220,7 +269,7 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 				//n => println!("CdError: too much directories({} args given)", n),
 			}
 		},
-		"pipe"		=> println!("{:?}", command.args),
+		"pipe"		=> safe_pipe(command, &mut history),
 		"history"	=> print_history(&history),
 		"jobs"		=> print_jobs(&mut history),
 		"kill"		=> match command.args.len(){
@@ -232,7 +281,7 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 }
 
 fn create_file(file: *const i8){ unsafe {
-	let open_mode = CString::new("a").unwrap();
+	let open_mode = CString::new("w").unwrap();
 	let open_file = fopen(file, open_mode.as_ptr()); 
 	fclose(open_file);	
 } }
@@ -260,11 +309,18 @@ fn print_job(job: &Vec<String>){
 }
 fn print_jobs (history: &mut History){
 	let mut status: i32 = 1;
-	let mut new_jobs: Vec<(i32, Vec<String>)> = Vec::new();
-	for &(pid, ref job) in &history.jobs{
-		if unsafe{ waitpid(pid, &mut status, libc::WNOHANG)}  == 0{
-			print_job(job); 
-			new_jobs.push((pid, job.clone()));
+	let mut new_jobs: Vec<(Vec<i32>, Vec<String>)> = Vec::new();
+	for &(ref pids, ref job) in &history.jobs{
+		let mut finished = true;
+		for &pid in pids{
+			if unsafe{ waitpid(pid, &mut status, libc::WNOHANG) }  == 0{
+				finished = false;
+				break;
+			}
+		}
+		if !finished {
+			print_job(&job); 
+			new_jobs.push((pids.clone(), job.clone()));
 		}
 	}
 	history.jobs = new_jobs;

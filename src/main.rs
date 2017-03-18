@@ -185,7 +185,10 @@ fn io_redirection(command: &CommandLine) -> Vec<String> {
 					).unwrap();
 				let file_ptr = file.as_ptr();
 				match arg.chars().nth(0).unwrap(){
-					'<'	=> { in_handle = unsafe { open(file_ptr, O_RDONLY) }; },
+					'<'	=> { 
+						in_handle = unsafe { open(file_ptr, O_RDONLY) }; 
+						if in_handle == -1 {println!("IORedirectionError: file to be opened not exist." );}
+					},
 					'>' => { 
 						// In case such file don't exist, we create it by fopen.
 						create_file(file_ptr);

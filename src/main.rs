@@ -91,30 +91,6 @@ fn safe_chdir(dest: String){
 	}
 }
 
-fn safe_execvp(args: Vec<String>){
-	let cmd = args[0].clone();
-	// Convert cmd(args[0]) and args into C style,
-	let c_prog = CString::new(cmd.as_bytes()).unwrap();
-	// The following lines must be wrong
-	// multiple args couldn't be translated to C style.
-	// For example, ls -a -l will only take -l pary.
-	let c_args_temp: Vec<_> = args.iter()
-			.map(|x| CString::new(x.as_bytes())
-				.unwrap()).collect();
-	let mut c_args: Vec<_> = c_args_temp.iter()
-			.map(|x| x.as_ptr()).collect();
-	c_args.push(std::ptr::null());
-	match unsafe{ execvp(c_prog.as_ptr(), c_args.as_ptr()) }{
-		-1 => println!("ExecError: failed to execute."),
-		// Should execv(*const i8, *const *const i8) work properly, 
-		// the following line won't print.
-		_  => println!("ExecError: your computer's down 
-						cause something crazy thing happened"),
-	};
-	unsafe{ exit(0); }
-}
-
-
 fn safe_pipe(command: CommandLine,
 			 mut history: &mut History){
 	let args_cnt = command.args.len();
@@ -131,6 +107,7 @@ fn safe_pipe(command: CommandLine,
 			-1	=> { println!("ForkError: failed to fork."); },
 			0	=> {
 				unsafe {
+				// Open a pipe in both ends.
 					if i!= 0			{ dup2(pipes[i-1][0],0); }
 					if i!=args_cnt-1	{ dup2(pipes[ i ][1],1); }
 				}
@@ -138,8 +115,27 @@ fn safe_pipe(command: CommandLine,
 					// Close each end of each pipe.
 					unsafe{ close(pipes[j][0]); close(pipes[j][1]); }
 				}
+/*				// Don't worry, since this is a child process, 
+				// pids is at my disposal, 
+				// I can pop without worrying pushing it back.
+				match pids.pop() {
+					// If this is the first command in the pipeline, do it
+					None		=> { },
+					// Or it shall wait until it's former child to finish.
+					Some(pid)	=> {
+						let mut status: i32 = 1;
+						unsafe{ waitpid(pid, &mut status, 0) };
+					}
+				}*/
 				let sub_cmd = parse_cmd(command.args[i].clone());
-				execute(&sub_cmd);
+				match sub_cmd.cmd.as_ref(){
+					"history"	=> { io_redirection(&sub_cmd); print_history(&history) },
+					"jobs"		=> { io_redirection(&sub_cmd); print_jobs(&mut history) },
+					_			=> execute(&sub_cmd),
+				};
+				// This shouldn't run for external commands, 
+				// it's reserved for internal command history and jobs.
+				unsafe{ exit(0); }
 			},
 			pid => { pids.push(pid); },
 		}
@@ -163,6 +159,29 @@ fn safe_pipe(command: CommandLine,
 			unsafe{ waitpid(pid, &mut status, 0); };
 		}
 	}
+}
+
+fn safe_execvp(args: Vec<String>){
+	let cmd = args[0].clone();
+	// Convert cmd(args[0]) and args into C style,
+	let c_prog = CString::new(cmd.as_bytes()).unwrap();
+	// The following lines must be wrong
+	// multiple args couldn't be translated to C style.
+	// For example, ls -a -l will only take -l pary.
+	let c_args_temp: Vec<_> = args.iter()
+			.map(|x| CString::new(x.as_bytes())
+				.unwrap()).collect();
+	let mut c_args: Vec<_> = c_args_temp.iter()
+			.map(|x| x.as_ptr()).collect();
+	c_args.push(std::ptr::null());
+	match unsafe{ execvp(c_prog.as_ptr(), c_args.as_ptr()) }{
+		-1 => println!("ExecError: failed to execute."),
+		// Should execv(*const i8, *const *const i8) work properly, 
+		// the following line won't print.
+		_  => println!("ExecError: your computer's down 
+						cause something crazy thing happened"),
+	};
+	unsafe{ exit(0); }
 }
 
 fn io_redirection(command: &CommandLine) -> Vec<String> {
@@ -250,8 +269,9 @@ fn main() {
 		match io::stdin().read_line(&mut cmd_line){
 		// Catch possible errors here.
 			// Once nothing read(EOF), exit.
-			Ok(n)  => { if n==0 { break; } },
-			Err(_) => { println!("ReadLineError: failed to read."); continue; },
+			Ok(0)	=> { break; },
+			Ok(_)	=> { },
+			Err(_)	=> { println!("ReadLineError: failed to read."); continue; },
 		}
 		history.hist.push(cmd_line.clone());
 		let command = parse_cmd(cmd_line);

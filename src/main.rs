@@ -115,18 +115,9 @@ fn safe_pipe(command: CommandLine,
 					// Close each end of each pipe.
 					unsafe{ close(pipes[j][0]); close(pipes[j][1]); }
 				}
-/*				// Don't worry, since this is a child process, 
+				// Don't worry, since this is a child process, 
 				// pids is at my disposal, 
 				// I can pop without worrying pushing it back.
-				match pids.pop() {
-					// If this is the first command in the pipeline, do it
-					None		=> { },
-					// Or it shall wait until it's former child to finish.
-					Some(pid)	=> {
-						let mut status: i32 = 1;
-						unsafe{ waitpid(pid, &mut status, 0) };
-					}
-				}*/
 				let sub_cmd = parse_cmd(command.args[i].clone());
 				match sub_cmd.cmd.as_ref(){
 					"history"	=> { io_redirection(&sub_cmd); print_history(&history) },
@@ -289,7 +280,6 @@ fn execute_cmd(command: CommandLine, mut history: &mut History){
 				1 => println!("CdError: no directory given."),
 				// Real bash won't care if there are more parameters. 
 				_ => safe_chdir(command.args[1].clone()),
-				//n => println!("CdError: too much directories({} args given)", n),
 			}
 		},
 		"pipe"		=> safe_pipe(command, &mut history),

@@ -1,3 +1,6 @@
+# rush
+
+Homework for OS2 Spring 2016. Others homework including [rwlock](https://github.com/DataCorrupted/rwlock) and a course project [sandbox](https://github.com/DataCorrupted/sandbox.git)
 
 # Extra features:
 
